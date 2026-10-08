@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SNARD</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-blue: #1555c0;
+            --card-purple: #b693f8;
+            --card-purple-hover: #a178ed;
+            --text-light: #ffffff;
+            --tab-active: #093c8a;
+        }
+
+        body {
+            background-color: var(--bg-blue);
+            color: var(--text-light);
+            font-family: 'Oswald', sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+            user-select: none;
+        }
+
+        .inter-font {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Perspective for 3D flip */
+        .scene {
+            perspective: 1000px;
+        }
+
+        /* Card Container */
+        .card-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+
+        .card-container.is-flipped {
+            transform: rotateY(180deg);
+        }
+
+        /* Card Faces */
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            background-color: #bb99ff;
+        }
+
+        .card-face-back {
+            transform: rotateY(180deg);
+            background-color: #8c52ff;
+        }
+
+        .editable-text {
+            background: transparent;
+            border: none;
+            color: white;
+            text-align: center;
+            font-size: 3rem;
+            font-family: 'Oswald', sans-serif;
+            font-weight: 600;
+            width: 90%;
+            outline: none;
+            resize: none;
+        }
+
+        .editable-text::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1); 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3); 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.5); 
+        }
+
+        /* Context Menu */
+        #context-menu {
+            display: none;
+            position: absolute;
+            background: white;
+            color: black;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            min-width: 120px;
+        }
+        .context-item {
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .context-item:hover {
+            background: #f3f4f6;
+        }
+        .context-item.delete {
+            color: #ef4444;
+        }
+        
+        /* Modals */
+        .modal-overlay {
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+        }
+
+        /* Answer Buttons */
+        .answer-btn {
+            transition: all 0.2s;
+            transform: scale(1);
+        }
+        .answer-btn:active {
+            transform: scale(0.95);
+        }
+        .answer-btn.correct {
+            background-color: #b2f252 !important;
+            color: #111 !important;
+        }
+        .answer-btn.wrong {
+            background-color: #f23c3c !important;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main App Container -->
+    <div id="app" class="min-h-screen flex flex-col w-full relative"></div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div class="context-item" id="ctx-rename">Rename</div>
+        <div class="context-item delete" id="ctx-delete">DELETE</div>
+    </div>
+
+    <!-- Custom Modal for Alerts/Prompts (Avoids native alert()) -->
+    <div id="custom-modal" class="hidden fixed inset-0 modal-overlay z-50 flex items-center justify-center">
+        <div class="bg-white text-gray-800 rounded-xl p-6 w-11/12 max-w-md shadow-2xl">
+            <h2 id="modal-title" class="text-2xl font-bold mb-4 font-oswald uppercase">Title</h2>
+            <div id="modal-content" class="mb-6 inter-font">
+                <!-- Input or text goes here -->
+            </div>
+            <div class="flex justify-end space-x-3">
+                <button id="modal-cancel" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 transition inter-font font-semibold">Cancel</button>
+                <button id="modal-confirm" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition inter-font font-semibold">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        const state = {
+            user: null,
+            projects: [],
+            localCards: {},
+            currentProjectId: null,
+            cards: [],
+            searchQuery: '',
+            view: 'home', 
+            tab: 'ADD', 
+            addTab: { currentIndex: 0, isFlipped: false, editingFront: '', editingBack: '', isEditing: false },
+            flashTab: { shuffled: [], currentIndex: 0, isFlipped: false },
+            testTab: { currentIndex: 0, options: [], answered: false, selectedIndex: -1 },
+            lookupTab: { query: '', result: null },
+            contextMenu: { visible: false, projectId: null, projectName: null }
+        };
+
+        const API_URL = 'http://localhost:5000'; 
+
+        async function initAuth() {
+            // Giả lập ID người dùng và lưu trên máy để phân biệt dữ liệu trên SQL
+            let localUserId = localStorage.getItem('flashcard_user_id');
+            if (!localUserId) {
+                localUserId = 'user_' + Date.now();
+                localStorage.setItem('flashcard_user_id', localUserId);
+            }
+            state.user = { uid: localUserId };
+            await loadProjects();
+        }
+
+        async function loadProjects() {
+            try {
+                const res = await fetch(`${API_URL}/projects?user_id=${state.user.uid}`);
+                if (res.ok) {
+                    state.projects = await res.json();
+                } else {
+                    const err = await res.json().catch(()=>({}));
+                    showError(err.error || "Lỗi tải project từ Server");
+                }
+            } catch (e) {
+                console.error("Lỗi kết nối Backend:", e);
+                showError("Không thể kết nối đến Python Server. Hãy kiểm tra server app.py đã chạy chưa!");
+            }
+            if (state.view === 'home') render(); // Đảm bảo web luôn hiển thị dù có lỗi
+        }
+
+        async function createProject(name) {
+            try {
+                const res = await fetch(`${API_URL}/projects`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: state.user.uid, name: name })
+                });
+                if (res.ok) await loadProjects();
+                else showError((await res.json()).error || "Lỗi server");
+            } catch (e) { showError("Lỗi khi tạo project: " + e.message); }
+        }
+
+        async function updateProject(id, newName) {
+            try {
+                const res = await fetch(`${API_URL}/projects/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                if (res.ok) await loadProjects();
+                else showError((await res.json()).error || "Lỗi server");
+            } catch (e) { showError("Lỗi khi đổi tên project: " + e.message); }
+        }
+
+        async function deleteProject(id) {
+            try {
+                const res = await fetch(`${API_URL}/projects/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    if (state.currentProjectId === id) navigateHome();
+                    else await loadProjects();
+                } else showError((await res.json()).error || "Lỗi server");
+            } catch (e) { showError("Lỗi khi xóa project: " + e.message); }
+        }
+
+        async function loadCards(projectId) {
+            try {
+                const res = await fetch(`${API_URL}/cards?project_id=${projectId}`);
+                if (res.ok) {
+                    state.cards = await res.json();
+                } else {
+                    showError((await res.json()).error || "Lỗi tải thẻ");
+                }
+            } catch (e) { showError("Lỗi khi tải thẻ flashcard: " + e.message); }
+        }
+
+        async function saveCard(front, back) {
+            if (!state.currentProjectId) return;
+            const currentCard = state.cards[state.addTab.currentIndex];
+            const isNewCard = !currentCard; // Kiểm tra xem đây có phải thẻ mới tinh không
+            
+            try {
+                let res;
+                if (!isNewCard) {
+                    res = await fetch(`${API_URL}/cards/${currentCard.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ front, back })
+                    });
+                } else {
+                    res = await fetch(`${API_URL}/cards`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ project_id: state.currentProjectId, front, back })
+                    });
+                }
+                
+                if (res.ok) {
+                    await loadCards(state.currentProjectId);
+                    if (isNewCard) {
+                        state.addTab.currentIndex = state.cards.length; // Chỉ nhảy đến cuối bảng nếu là tạo thẻ mới
+                    }
+                    render();
+                } else {
+                    showError((await res.json()).error || "Lỗi lưu thẻ");
+                }
+            } catch (e) {
+                showError("Lỗi khi lưu thẻ: " + e.message);
+            }
+        }
+
+        const appContainer = document.getElementById('app');
+
+        function render() {
+            if (state.view === 'home') {
+                renderHome();
+            } else if (state.view === 'project') {
+                renderProject();
+            }
+        }
+
+        function renderHome() {
+            const filteredProjects = state.projects.filter(p => p.name.toLowerCase().includes(state.searchQuery.toLowerCase()));
+
+            appContainer.innerHTML = `
+                <div class="w-full flex-1 flex flex-col items-center pt-8 px-4 sm:px-12">
+                    <h1 class="text-6xl sm:text-7xl font-bold uppercase tracking-wider mb-8 drop-shadow-md">FLASHCARD</h1>
+                    
+                    <div class="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-center mb-8 space-y-4 sm:space-y-0">
+                        <button id="btn-new-project" class="bg-[#7888ff] hover:bg-[#6878ef] text-white px-6 py-3 rounded-full flex items-center font-bold text-xl shadow-lg transition-transform hover:scale-105">
+                            <i class="fa-solid fa-plus mr-3 bg-white text-[#7888ff] rounded-full w-6 h-6 flex items-center justify-center text-sm"></i> NEW PROJECT
+                        </button>
+                        
+                        <div class="relative w-full sm:w-1/2 md:w-1/3">
+                            <i class="fa-solid fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-white text-xl opacity-70"></i>
+                            <input type="text" id="input-search" placeholder="FIND PROJECT" value="${state.searchQuery}"
+                                class="w-full bg-[#7888ff] bg-opacity-70 text-white placeholder-white placeholder-opacity-70 px-12 py-3 rounded-full font-semibold text-xl outline-none focus:bg-opacity-100 transition shadow-lg inter-font">
+                        </div>
+                    </div>
+
+                    <div class="w-full max-w-4xl flex flex-col space-y-2">
+                        <div class="bg-[#cba8ff] text-black font-bold text-2xl px-6 py-4 rounded-sm shadow-md">
+                            PROJECT
+                        </div>
+                        ${filteredProjects.map(project => `
+                            <div class="project-item bg-[#e4caff] hover:bg-[#d8b4fe] text-black font-bold text-xl px-6 py-4 rounded-sm shadow-sm cursor-pointer transition flex justify-between items-center" 
+                                 data-id="${project.id}" 
+                                 data-name="${project.name}">
+                                <span>${escapeHTML(project.name)}</span>
+                            </div>
+                        `).join('')}
+                        ${filteredProjects.length === 0 && state.projects.length > 0 ? `<div class="text-center mt-4 text-xl opacity-70">No projects found.</div>` : ''}
+                        ${state.projects.length === 0 ? `<div class="text-center mt-4 text-xl opacity-70">No projects yet. Click '+ NEW PROJECT' to start.</div>` : ''}
+                    </div>
+                </div>
+            `;
+
+            // Attach Home Listeners
+            document.getElementById('btn-new-project').addEventListener('click', handleNewProject);
+            
+            const searchInput = document.getElementById('input-search');
+            searchInput.addEventListener('input', (e) => {
+                state.searchQuery = e.target.value;
+                render(); // Re-render triggers focus loss, so we handle it below
+                // Restore focus
+                const newSearchInput = document.getElementById('input-search');
+                if(newSearchInput){
+                    newSearchInput.focus();
+                    newSearchInput.setSelectionRange(state.searchQuery.length, state.searchQuery.length);
+                }
+            });
+
+            document.querySelectorAll('.project-item').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    openProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name);
+                });
+                el.addEventListener('contextmenu', handleContextMenu);
+            });
+        }
+
+        function renderProject() {
+            const currentProject = state.projects.find(p => p.id === state.currentProjectId);
+            const projectName = currentProject ? currentProject.name : 'Unknown Project';
+
+            appContainer.innerHTML = `
+                <div class="w-full flex-1 flex flex-col h-screen">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between px-6 pt-6 pb-4 relative">
+                        <button id="btn-back" class="text-white hover:text-gray-200 transition transform hover:scale-110 z-10">
+                            <i class="fa-solid fa-reply text-5xl"></i>
+                        </button>
+                        <h1 class="absolute w-full text-center left-0 text-5xl sm:text-6xl font-bold uppercase tracking-wider">${escapeHTML(projectName)}</h1>
+                        <div class="w-12"></div> <!-- Spacer for flex balance -->
+                    </div>
+
+                    <!-- Tabs -->
+                    <div class="w-full max-w-6xl mx-auto flex font-bold text-2xl uppercase mt-4">
+                        ${['ADD', 'FLASHCARD', 'TEST', 'LOOK UP', 'LIST'].map(tab => `
+                            <div class="flex-1 text-center py-2 cursor-pointer transition ${state.tab === tab ? 'bg-[#093c8a] border-b-4 border-[#093c8a]' : 'hover:bg-[#1a65d6]'}"
+                                 data-tab="${tab}">
+                                ${tab}
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <!-- Tab Content Area -->
+                    <div class="flex-1 flex flex-col items-center justify-center relative w-full bg-[#093c8a] pb-12 overflow-hidden">
+                        ${getTabContent()}
+                    </div>
+                </div>
+            `;
+
+            // Attach Project Listeners
+            document.getElementById('btn-back').addEventListener('click', navigateHome);
+            
+            document.querySelectorAll('[data-tab]').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    const newTab = e.currentTarget.dataset.tab;
+                    switchTab(newTab);
+                });
+            });
+
+            attachTabSpecificListeners();
+        }
+
+        function getTabContent() {
+            switch(state.tab) {
+                case 'ADD': return renderAddTab();
+                case 'FLASHCARD': return renderFlashcardTab();
+                case 'TEST': return renderTestTab();
+                case 'LOOK UP': return renderLookUpTab();
+                case 'LIST': return renderListTab();
+            }
+        }
+
+        function renderAddTab() {
+            const card = state.cards[state.addTab.currentIndex];
+            const isEditing = state.addTab.isEditing;
+            
+            // If editing, use temp state. Otherwise use card data, or empty if new card.
+            let displayFront = 'WRITE HERE';
+            let displayBack = 'WRITE HERE';
+            
+            if (isEditing) {
+                displayFront = state.addTab.editingFront;
+                displayBack = state.addTab.editingBack;
+            } else if (card) {
+                displayFront = card.front || 'WRITE HERE';
+                displayBack = card.back || 'WRITE HERE';
+            }
+
+            return `
+                <div class="scene w-11/12 max-w-3xl h-64 md:h-96 mt-10" id="card-scene">
+                    <div class="card-container ${state.addTab.isFlipped ? 'is-flipped' : ''}" id="flashcard-container">
+                        <!-- Front -->
+                        <div class="card-face">
+                            <textarea id="add-front-input" class="editable-text h-3/4 bg-transparent outline-none text-center" 
+                                placeholder="WRITE HERE">${escapeHTML(displayFront === 'WRITE HERE' ? '' : displayFront)}</textarea>
+                            <div class="absolute bottom-4 text-sm font-normal opacity-70 inter-font">Right-click to flip, Enter to save</div>
+                        </div>
+                        <!-- Back -->
+                        <div class="card-face card-face-back">
+                            <textarea id="add-back-input" class="editable-text h-3/4 bg-transparent outline-none text-center" 
+                                placeholder="WRITE HERE">${escapeHTML(displayBack === 'WRITE HERE' ? '' : displayBack)}</textarea>
+                            <div class="absolute bottom-4 text-sm font-normal opacity-70 inter-font">Right-click to flip, Enter to save</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Arrows -->
+                <div class="absolute bottom-8 w-full px-8 md:px-16 flex justify-between z-10 pointer-events-none">
+                    <button id="add-prev" class="pointer-events-auto text-[#7888ff] hover:text-[#9faaff] transition transform hover:scale-110 opacity-${state.addTab.currentIndex > 0 ? '100' : '50 cursor-not-allowed'}">
+                        <i class="fa-solid fa-arrow-left text-5xl md:text-7xl drop-shadow-md"></i>
+                    </button>
+                    <button id="add-next" class="pointer-events-auto text-[#7888ff] hover:text-[#9faaff] transition transform hover:scale-110">
+                        <i class="fa-solid fa-arrow-right text-5xl md:text-7xl drop-shadow-md"></i>
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderFlashcardTab() {
+            if (state.cards.length === 0) {
+                return `<div class="text-3xl font-bold mt-20 text-center text-gray-300">No flashcards yet. Add some first!</div>`;
+            }
+
+            const card = state.flashTab.shuffled[state.flashTab.currentIndex];
+            if (!card) return '';
+
+            return `
+                <div class="scene w-11/12 max-w-3xl h-64 md:h-96 mt-10 cursor-pointer" id="review-card">
+                    <div class="card-container ${state.flashTab.isFlipped ? 'is-flipped' : ''}">
+                        <div class="card-face text-5xl md:text-6xl text-center px-4 break-words font-bold">
+                            ${escapeHTML(card.front)}
+                            <div class="absolute bottom-4 text-sm font-normal opacity-70 inter-font">Click on the card or hit space to flip</div>
+                        </div>
+                        <div class="card-face card-face-back text-5xl md:text-6xl text-center px-4 break-words font-bold">
+                            ${escapeHTML(card.back)}
+                            <div class="absolute bottom-4 text-sm font-normal opacity-70 inter-font">Click on the card or hit space to flip</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="absolute bottom-8 w-full px-8 md:px-16 flex justify-between z-10">
+                    <button id="flash-prev" class="text-[#7888ff] hover:text-[#9faaff] transition transform hover:scale-110">
+                        <i class="fa-solid fa-arrow-left text-5xl md:text-7xl drop-shadow-md"></i>
+                    </button>
+                    <button id="flash-next" class="text-[#7888ff] hover:text-[#9faaff] transition transform hover:scale-110">
+                        <i class="fa-solid fa-arrow-right text-5xl md:text-7xl drop-shadow-md"></i>
+                    </button>
+                </div>
+                <div class="absolute top-4 right-4 text-xl inter-font font-bold opacity-70">
+                    ${state.flashTab.currentIndex + 1} / ${state.flashTab.shuffled.length}
+                </div>
+            `;
+        }
+
+        function renderTestTab() {
+            if (state.cards.length === 0) {
+                return `<div class="text-3xl font-bold mt-20 text-center text-gray-300">No flashcards yet. Add some first!</div>`;
+            }
+
+            const card = state.cards[state.testTab.currentIndex];
+            const options = state.testTab.options;
+
+            return `
+                <div class="w-11/12 max-w-4xl mt-10 flex flex-col items-center">
+                    <!-- Question Box -->
+                    <div class="bg-[#c084fc] w-full rounded-2xl py-12 px-16 relative flex items-center justify-center min-h-[160px] shadow-lg mb-8">
+                        <button id="test-prev" class="absolute left-4 text-[#8a5bd6] hover:text-white transition text-4xl">
+                            <i class="fa-solid fa-arrow-left"></i>
+                        </button>
+                        
+                        <h2 class="text-4xl md:text-5xl font-bold text-center text-white drop-shadow-sm">
+                            ${escapeHTML(card.front)}
+                        </h2>
+                        
+                        <button id="test-next" class="absolute right-4 text-[#8a5bd6] hover:text-white transition text-4xl">
+                            <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <!-- Options Grid -->
+                    <div class="w-full grid grid-cols-2 md:grid-cols-4 gap-4 px-2">
+                        ${options.map((opt, idx) => {
+                            let btnClass = "bg-[#a855f7] hover:bg-[#9333ea]";
+                            if (state.testTab.answered) {
+                                if (opt.isCorrect) btnClass = "correct";
+                                else if (idx === state.testTab.selectedIndex) btnClass = "wrong";
+                            }
+                            
+                            return `
+                                <button class="answer-btn ${btnClass} text-white font-bold text-5xl py-8 rounded-2xl shadow-md flex items-center justify-center transition-colors"
+                                    data-index="${idx}" ${state.testTab.answered ? 'disabled' : ''}>
+                                    <span class="text-2xl md:text-3xl line-clamp-3 px-3 text-center break-words">${escapeHTML(opt.text)}</span>
+                                </button>
+                            `;
+                        }).join('')}
+                    </div>
+                    
+                    <div class="mt-8 text-xl inter-font font-bold opacity-70">
+                        Question ${state.testTab.currentIndex + 1} of ${state.cards.length}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLookUpTab() {
+            return `
+                <div class="w-11/12 max-w-5xl mt-16 flex flex-col md:flex-row items-stretch justify-center space-y-6 md:space-y-0 md:space-x-8">
+                    <!-- Left: Search Input -->
+                    <div class="flex-1 bg-[#bb99ff] rounded-3xl p-8 flex items-center justify-center shadow-lg min-h-[250px]">
+                        <input type="text" id="lookup-input" 
+                            class="w-full bg-transparent border-b-4 border-white border-opacity-50 text-white text-4xl text-center outline-none focus:border-opacity-100 transition placeholder-white placeholder-opacity-70 pb-2"
+                            placeholder="SEARCH FRONT OR BACK" value="${escapeHTML(state.lookupTab.query)}">
+                    </div>
+                    
+                    <!-- Right: Result -->
+                    <div class="flex-1 bg-[#8c52ff] rounded-3xl p-8 flex items-center justify-center shadow-lg min-h-[250px]">
+                        <div class="text-white text-4xl text-center font-bold break-words w-full">
+                            ${state.lookupTab.result !== null ? escapeHTML(state.lookupTab.result) : '<span class="opacity-50">RESULT</span>'}
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-8 inter-font text-lg opacity-70">Type either side of a flashcard and hit Enter to reveal the other side.</div>
+            `;
+        }
+
+        function renderListTab() {
+            if (state.cards.length === 0) {
+                return `<div class="text-3xl font-bold mt-20 text-center text-gray-300">No flashcards yet. Add some first!</div>`;
+            }
+
+            return `
+                <div class="w-11/12 max-w-6xl mt-8 flex flex-col h-[75vh]">
+                    <div class="overflow-auto rounded-2xl shadow-lg">
+                        <table class="w-full border-collapse inter-font">
+                            <thead class="sticky top-0 z-10">
+                                <tr class="bg-[#c084fc] text-black">
+                                    <th class="w-1/2 px-6 py-4 text-left text-xl font-bold border-r border-[#093c8a]">FRONT</th>
+                                    <th class="w-1/2 px-6 py-4 text-left text-xl font-bold">BACK</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${state.cards.map((card, index) => `
+                                    <tr class="${index % 2 === 0 ? 'bg-[#bb99ff]' : 'bg-[#a978f0]'} text-white">
+                                        <td class="px-6 py-4 text-lg border-r border-[#093c8a] break-words">${escapeHTML(card.front)}</td>
+                                        <td class="px-6 py-4 text-lg break-words">${escapeHTML(card.back)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 text-center text-lg inter-font opacity-70">
+                        ${state.cards.length} flashcard${state.cards.length > 1 ? 's' : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function attachTabSpecificListeners() {
+            if (state.tab === 'ADD') {
+                const frontInput = document.getElementById('add-front-input');
+                const backInput = document.getElementById('add-back-input');
+                const cardScene = document.getElementById('card-scene');
+                
+                const handleInput = () => {
+                    state.addTab.isEditing = true;
+                    state.addTab.editingFront = frontInput.value;
+                    state.addTab.editingBack = backInput.value;
+                };
+
+                const handleKeyDown = (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        const frontVal = frontInput.value.trim();
+                        const backVal = backInput.value.trim();
+                        
+                        if (!frontVal || !backVal) {
+                            showError("Please fill in both the front and back of the flashcard before saving.");
+                            return;
+                        }
+
+                        saveCard(frontVal, backVal);
+                        state.addTab.isEditing = false;
+                        state.addTab.editingFront = '';
+                        state.addTab.editingBack = '';
+                        // Render happens automatically on snapshot update, but for immediate feedback:
+                        render();
+                    }
+                };
+
+                if (cardScene) {
+                    cardScene.addEventListener('contextmenu', (e) => {
+                        e.preventDefault(); // Prevent default browser context menu
+                        state.addTab.isFlipped = !state.addTab.isFlipped;
+                        render();
+                        
+                        // Focus the correct side after flip
+                        setTimeout(() => {
+                            if (state.addTab.isFlipped) {
+                                const backInp = document.getElementById('add-back-input');
+                                if(backInp) backInp.focus();
+                            } else {
+                                const frontInp = document.getElementById('add-front-input');
+                                if(frontInp) frontInp.focus();
+                            }
+                        }, 50);
+                    });
+                }
+
+                if(frontInput) {
+                    frontInput.addEventListener('input', handleInput);
+                    frontInput.addEventListener('keydown', handleKeyDown);
+                }
+                if(backInput) {
+                    backInput.addEventListener('input', handleInput);
+                    backInput.addEventListener('keydown', handleKeyDown);
+                }
+
+                document.getElementById('add-prev').addEventListener('click', () => {
+                    if (state.addTab.currentIndex > 0) {
+                        state.addTab.currentIndex--;
+                        state.addTab.isEditing = false;
+                        state.addTab.isFlipped = false;
+                        render();
+                    }
+                });
+
+                document.getElementById('add-next').addEventListener('click', () => {
+                    if (state.addTab.currentIndex < state.cards.length) {
+                        state.addTab.currentIndex++;
+                        state.addTab.isEditing = false;
+                        state.addTab.isFlipped = false;
+                        render();
+                    }
+                });
+            }
+
+            if (state.tab === 'FLASHCARD') {
+                const cardEl = document.getElementById('review-card');
+                if (cardEl) {
+                    cardEl.addEventListener('click', () => {
+                        state.flashTab.isFlipped = !state.flashTab.isFlipped;
+                        render();
+                    });
+                }
+
+                const handleSpace = (e) => {
+                    if (e.code === 'Space' && state.tab === 'FLASHCARD') {
+                        e.preventDefault();
+                        state.flashTab.isFlipped = !state.flashTab.isFlipped;
+                        render();
+                    }
+                };
+                
+                // Attach to window but ensure we only add it once per render or handle it gracefully
+                window.removeEventListener('keydown', window._flashcardSpaceHandler);
+                window._flashcardSpaceHandler = handleSpace;
+                window.addEventListener('keydown', handleSpace);
+
+                const nextFlash = () => {
+                    if(state.flashTab.shuffled.length === 0) return;
+                    state.flashTab.currentIndex = (state.flashTab.currentIndex + 1) % state.flashTab.shuffled.length;
+                    state.flashTab.isFlipped = false;
+                    render();
+                };
+                
+                const prevFlash = () => {
+                    if(state.flashTab.shuffled.length === 0) return;
+                    state.flashTab.currentIndex = (state.flashTab.currentIndex - 1 + state.flashTab.shuffled.length) % state.flashTab.shuffled.length;
+                    state.flashTab.isFlipped = false;
+                    render();
+                };
+
+                const nextBtn = document.getElementById('flash-next');
+                const prevBtn = document.getElementById('flash-prev');
+                if(nextBtn) nextBtn.addEventListener('click', nextFlash);
+                if(prevBtn) prevBtn.addEventListener('click', prevFlash);
+            }
+
+            if (state.tab === 'TEST') {
+                document.querySelectorAll('.answer-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        if (state.testTab.answered) return;
+                        state.testTab.selectedIndex = parseInt(e.currentTarget.dataset.index);
+                        state.testTab.answered = true;
+                        render();
+                    });
+                });
+
+                const nextTest = () => {
+                    if (state.cards.length === 0) return;
+                    state.testTab.currentIndex = (state.testTab.currentIndex + 1) % state.cards.length;
+                    generateTestOptions();
+                    render();
+                };
+                
+                const prevTest = () => {
+                    if (state.cards.length === 0) return;
+                    state.testTab.currentIndex = (state.testTab.currentIndex - 1 + state.cards.length) % state.cards.length;
+                    generateTestOptions();
+                    render();
+                };
+
+                const nextBtn = document.getElementById('test-next');
+                const prevBtn = document.getElementById('test-prev');
+                if(nextBtn) nextBtn.addEventListener('click', nextTest);
+                if(prevBtn) prevBtn.addEventListener('click', prevTest);
+            }
+
+            if (state.tab === 'LOOK UP') {
+                const input = document.getElementById('lookup-input');
+                if (input) {
+                    input.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            const query = e.target.value.trim().toLowerCase();
+                            state.lookupTab.query = e.target.value;
+                            
+                            // Find matching card from either side
+                            const match = state.cards.find(c =>
+                                c.front.toLowerCase() === query || c.back.toLowerCase() === query
+                            );
+                            if (match) {
+                                state.lookupTab.result =
+                                    match.front.toLowerCase() === query ? match.back : match.front;
+                            } else {
+                                state.lookupTab.result = 'NOT FOUND';
+                            }
+                            render();
+                            
+                            // Keep focus
+                            setTimeout(() => {
+                                const newInp = document.getElementById('lookup-input');
+                                if(newInp) {
+                                    newInp.focus();
+                                    newInp.setSelectionRange(newInp.value.length, newInp.value.length);
+                                }
+                            }, 10);
+                        }
+                    });
+                }
+            }
+        }
+
+        function switchTab(newTab) {
+            state.tab = newTab;
+            
+            // Clean up global listeners
+            if (window._flashcardSpaceHandler) {
+                window.removeEventListener('keydown', window._flashcardSpaceHandler);
+            }
+
+            if (newTab === 'FLASHCARD') {
+                // Shuffle cards for review
+                state.flashTab.shuffled = [...state.cards].sort(() => Math.random() - 0.5);
+                state.flashTab.currentIndex = 0;
+                state.flashTab.isFlipped = false;
+            } else if (newTab === 'TEST') {
+                state.testTab.currentIndex = 0;
+                generateTestOptions();
+            } else if (newTab === 'ADD') {
+                state.addTab.isEditing = false;
+                state.addTab.isFlipped = false;
+            } else if (newTab === 'LOOK UP') {
+                state.lookupTab.query = '';
+                state.lookupTab.result = null;
+            }
+
+            render();
+        }
+
+        function generateTestOptions() {
+            if (state.cards.length === 0) return;
+            
+            state.testTab.answered = false;
+            state.testTab.selectedIndex = -1;
+            
+            const currentCard = state.cards[state.testTab.currentIndex];
+            const options = [{ text: currentCard.back, isCorrect: true }];
+            
+            // Get up to 3 wrong answers
+            const otherCards = state.cards.filter(c => c.id !== currentCard.id);
+            const shuffledOthers = [...otherCards].sort(() => Math.random() - 0.5);
+            
+            for (let i = 0; i < 3; i++) {
+                if (shuffledOthers[i]) {
+                    options.push({ text: shuffledOthers[i].back, isCorrect: false });
+                } else {
+                    // Fallback if less than 4 cards exist
+                    options.push({ text: `Random Option ${i+1}`, isCorrect: false });
+                }
+            }
+            
+            // Shuffle options
+            state.testTab.options = options.sort(() => Math.random() - 0.5);
+        }
+
+        function navigateHome() {
+            state.view = 'home';
+            state.currentProjectId = null;
+            render();
+        }
+
+        function openProject(id, name) {
+            state.currentProjectId = id;
+            state.view = 'project';
+            state.tab = 'ADD';
+            state.addTab.currentIndex = 0; // Đặt lại index ban đầu
+            loadCards(id).then(() => {
+                // Nhảy đến slot thẻ trống cuối cùng khi mới vào Project
+                state.addTab.currentIndex = state.cards.length; 
+                render();
+            });
+        }
+
+        function handleNewProject() {
+            showModal("New Project", `<input type="text" id="modal-input" class="w-full border-2 border-gray-300 rounded p-2 text-xl" placeholder="Project Name">`, async () => {
+                const name = document.getElementById('modal-input').value.trim();
+                if (name) {
+                    await createProject(name);
+                }
+            });
+            setTimeout(() => {
+                const inp = document.getElementById('modal-input');
+                if(inp) {
+                    inp.focus();
+                    inp.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') document.getElementById('modal-confirm').click();
+                    });
+                }
+            }, 100);
+        }
+
+        // Context Menu Logic
+        const contextMenu = document.getElementById('context-menu');
+        
+        function handleContextMenu(e) {
+            e.preventDefault();
+            const projectId = e.currentTarget.dataset.id;
+            const projectName = e.currentTarget.dataset.name;
+            
+            state.contextMenu.projectId = projectId;
+            state.contextMenu.projectName = projectName;
+            state.contextMenu.visible = true;
+            
+            contextMenu.style.display = 'block';
+            contextMenu.style.left = `${e.pageX}px`;
+            contextMenu.style.top = `${e.pageY}px`;
+        }
+
+        document.addEventListener('click', (e) => {
+            if (state.contextMenu.visible && !contextMenu.contains(e.target)) {
+                contextMenu.style.display = 'none';
+                state.contextMenu.visible = false;
+            }
+        });
+
+        document.getElementById('ctx-rename').addEventListener('click', () => {
+            contextMenu.style.display = 'none';
+            state.contextMenu.visible = false;
+            
+            showModal("Rename Project", `<input type="text" id="modal-input" class="w-full border-2 border-gray-300 rounded p-2 text-xl" value="${escapeHTML(state.contextMenu.projectName)}">`, async () => {
+                const name = document.getElementById('modal-input').value.trim();
+                if (name && name !== state.contextMenu.projectName) {
+                    await updateProject(state.contextMenu.projectId, name);
+                }
+            });
+            setTimeout(() => {
+                const inp = document.getElementById('modal-input');
+                if(inp) {
+                    inp.focus();
+                    inp.select();
+                    inp.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') document.getElementById('modal-confirm').click();
+                    });
+                }
+            }, 100);
+        });
+
+        document.getElementById('ctx-delete').addEventListener('click', () => {
+            contextMenu.style.display = 'none';
+            state.contextMenu.visible = false;
+            
+            showModal("Delete Project", `<p class="text-lg">Are you sure you want to delete <b>${escapeHTML(state.contextMenu.projectName)}</b>?</p>`, async () => {
+                await deleteProject(state.contextMenu.projectId);
+            });
+        });
+
+        // Modal Utility (replaces alert/prompt)
+        const modal = document.getElementById('custom-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+        const modalConfirm = document.getElementById('modal-confirm');
+        const modalCancel = document.getElementById('modal-cancel');
+        let currentModalConfirmCallback = null;
+
+        function showModal(title, htmlContent, onConfirm) {
+            modalTitle.innerText = title;
+            modalContent.innerHTML = htmlContent;
+            modal.classList.remove('hidden');
+            
+            currentModalConfirmCallback = async () => {
+                if (onConfirm) await onConfirm();
+                closeModal();
+            };
+        }
+
+        function closeModal() {
+            modal.classList.add('hidden');
+            currentModalConfirmCallback = null;
+        }
+
+        modalConfirm.addEventListener('click', () => {
+            if (currentModalConfirmCallback) currentModalConfirmCallback();
+        });
+        
+        modalCancel.addEventListener('click', closeModal);
+
+        // Security / Helpers
+        function escapeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>'"]/g, 
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag] || tag)
+            );
+        }
+
+        function showError(msg) {
+            showModal("Error", `<p class="text-red-500 font-bold">${escapeHTML(msg)}</p>`, null);
+        }
+
+        // Bắt đầu chạy ứng dụng (Sẽ gọi API tới Backend Python)
+        initAuth();
+
+    </script>
+</body>
+</html>
